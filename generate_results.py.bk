@@ -1,0 +1,85 @@
+import os
+import re
+import csv
+import sys
+
+HEADER = [
+    'formula', 'file', 'distance', 'road condition', 'clamped', 'max_t',
+    'lb', 'ub', 'ci', 's_runs', 'tot_runs'
+]
+
+def parse_filename(filename):
+    base = os.path.basename(filename)
+    if not base.startswith('results_'):
+        return None, None, None
+    
+    parts = base[8:].split('_')  # Remove 'results_' prefix
+    if len(parts) < 3:
+        return None, None, None
+    
+    distance = parts[0]
+    clamp = parts[-2]
+    max_t = parts[-1]
+    road = '_'.join(parts[1:-2]).replace('_', ' ')
+    return distance, road, clamp, max_t
+
+def process_file(filename, writer):
+    distance, road, clamp, max_t = parse_filename(filename)
+    if not all([distance, road, clamp]):
+        return
+    
+    with open(filename, 'r') as f:
+        current_formula = None
+        current_query = None
+        
+        for line in f:
+            line = line.strip()
+            
+            # Match formula declaration
+            formula_match = re.match(
+                r'^Verifying formula (\d+) at (query\.q:\d+)', 
+                line
+            )
+            if formula_match:
+                current_formula = formula_match.group(1)
+                current_query = formula_match.group(2)
+                continue
+                
+            # Match result line
+            result_match = re.search(
+                r'\((\d+)/(\d+) runs\).*?\[([0-9.]+),([0-9.]+)\].*?(\d+)% CI', 
+                line
+            )
+            if result_match and current_formula:
+                runs = result_match.group(1)
+                tot_runs = result_match.group(2)
+                lb = result_match.group(3)
+                ub = result_match.group(4)
+                ci = result_match.group(5)
+                
+                writer.writerow([
+                    current_formula,
+                    current_query,
+                    distance,
+                    road,
+                    clamp,
+                    max_t,
+                    lb,
+                    ub,
+                    ci,
+                    runs,
+                    tot_runs
+                ])
+                
+                current_formula = None
+                current_query = None
+
+def main():
+    writer = csv.writer(sys.stdout)
+    writer.writerow(HEADER)
+    
+    for filename in sys.argv[1:]:
+        process_file(filename, writer)
+
+if __name__ == '__main__':
+    main()

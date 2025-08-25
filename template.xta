@@ -1,0 +1,350 @@
+// Road dynamic friction
+const int NUM_VEHICLES = 4;
+const double g = 9.81;
+
+// Road parameters
+
+const double friction_coefficient[6][3] = {
+    {1.28,23.99,0.52},    // dry asphalt
+    {0.86,33.82,0.35},    // wet asphalt
+    {0.19,94.13,0.06},    // snow            
+    {0.05,306.39,0.01},      // ice
+    {1.37,6.46,0.671},    // dry cobblestone
+    {0.4,33.71,0.12}      // wet cobblestone
+};
+
+const int DRY_ASPHALT     = 0;
+const int WET_ASPHALT     = 1;
+const int SNOW            = 2;
+const int ICE             = 3;
+const int DRY_COBBLESTONE = 4;
+const int WET_COBBLESTONE = 5;
+
+//const int selected_state = DRY_ASPHALT;
+//const int selected_state = WET_COBBLESTONE;
+const int selected_state = %ROAD_CONDITION%;
+
+const double road_state[3] = {
+    friction_coefficient[selected_state][0], 
+    friction_coefficient[selected_state][1], 
+    friction_coefficient[selected_state][2]
+};
+
+
+double desired_distance = %DISTANCE%;//*random(1);
+const bool USE_CLAMP = %USE_CLAMP%;
+
+//join platoon
+
+bool waiting = false;     //global variable used to indicate that a new vehicle want to join the middle of the platoon
+bool joinable = false;    //global variable used to synchronize the joining vehicle with the precedent and the anticedent
+
+int rank_inserted;        //new vehcile rank
+int new_next;             //rank of the vehcile next to the one inserted
+int last = 2;
+
+int next_after_leave;
+int not_attacked_vehicle = NUM_VEHICLES;
+broadcast chan stop_signal[NUM_VEHICLES];
+
+clock t;
+
+process LeaderDynamic(double& a_front,clock& x, clock& u, clock& a) {
+// Place local declarations here.
+const double m = 5000;
+const double J = 1.5;
+const double R = 0.18;
+const double ms = m+(J/(R*R));
+const double k = 10;
+const double alpha = 10;
+const double tau = 0.5;
+
+
+
+bool joined = false;
+bool left = false;
+
+/*
+clock x; // position along line/curve
+clock u; // longitudinal speed
+clock a = 0; // longitudinal acceleration
+clock w; // wheel rotation speed 
+*/
+
+double total_loss() {
+
+    return 0;
+}
+
+
+double desired_acceleration() {
+    return a_front;
+}
+    
+double torque(bool ghost) {
+    return ms*R*(desired_acceleration()) + R*total_loss();
+}
+
+state
+    L0 { a' == (a_front-a)/2 &&
+x' == u &&
+u' == a };
+init
+    L0;
+}
+
+process PlatoonCommand(double& a_leader, double& desired_distance) {
+clock s;
+
+int vehicle_to_stop = 0;
+state
+    L0,
+    CYCLE { s <=40 },
+    L1 { s <= 25 },
+    L2 { s <= 15 };
+commit
+    L0;
+init
+    L0;
+trans
+    L1 -> L2 { guard s >=25; assign a_leader = -0.25,
+s = 0; },
+    L2 -> CYCLE { guard s>=15; assign a_leader = 0.33,
+s = 0; },
+    CYCLE -> L1 { guard s >=30; assign a_leader = 0,
+s = 0; },
+    L0 -> CYCLE { assign a_leader = 0.33, 
+s = 0; };
+}
+
+process Simulation(clock& positions[NUM_VEHICLES]) {
+clock t;
+
+
+double average_distances[NUM_VEHICLES-1];
+double distances[NUM_VEHICLES-1];
+int samples = 0;
+
+// mio
+double rolling_avg[NUM_VEHICLES-1];
+double rolling_avg_addenda[NUM_VEHICLES - 1];
+const int window_size = 10;
+
+void initialize() {
+    for(i : int[0,NUM_VEHICLES-2]) {
+        average_distances[i] = -(positions[i+1]-positions[i])/1;
+        distances[i] = (positions[i+1]-positions[i])/1;  
+        
+        // Mio
+        rolling_avg[i] = distances[i];
+        rolling_avg_addenda[i] = rolling_avg[i];
+    }
+}
+
+void accum_diff() {
+    if(samples == 0) {
+        initialize();
+        samples++;
+        return;
+    }
+
+    for(i : int[0,NUM_VEHICLES-2]) {
+        average_distances[i] = (samples*average_distances[i]-(positions[i+1]-positions[i]))/(samples+1);
+        distances[i] = -(positions[i+1]-positions[i])/1;
+        
+        // implement rolling avg here  
+                  
+        samples++;
+    }    
+}
+state
+    L0 { t<=1 };
+init
+    L0;
+trans
+    L0 -> L0 { guard t>=1; assign accum_diff(), t = 0; };
+}
+
+process FollowerDynamic(int i, int next,   clock& x[NUM_VEHICLES], clock& u[NUM_VEHICLES], clock& a[NUM_VEHICLES],   double& d, broadcast chan& platoon_left[NUM_VEHICLES], broadcast chan& platoon_join,  const  bool leaving, const bool join_in_middle, const bool attacked, const int altered_var) {
+// Local clock
+clock s;
+
+const double k2 = 1;
+const double k1 = 1;
+const double k = 0.1; // gain on desired speed
+
+//const double deceleration_factor = 5;
+
+// Vehicle Parameters
+const double m = 1500; // vehicle mass
+const double R = 0.18; // wheel radius
+
+const double h = 1; // height of center of mass
+const double l = 2; // wheelbase length
+const double J = 100; // wheel inertia
+const double ms = m+J/(R*R);
+
+bool joined = false;
+bool left = false;
+bool safe_distance = false;
+bool altered_data = false;
+
+//attack parameters
+//position attacks
+double constant_attack_pos = 0;
+
+double sin_amplitude_pos = 0;
+double sin_frequency_pos = 0;
+
+//speed attacks
+double constant_attack_sp = 0;
+
+double sin_amplitude_sp = 0;
+double sin_frequency_sp = 0;
+
+//accelleration attacks
+double constant_attack_acc = 0;
+
+double sin_amplitude_acc = 0;
+double sin_frequency_acc = 0;
+
+clock w;      // angular velocity
+clock aw;     // angular acceleration
+clock slip;   // slip ratio
+clock tor;    // engine torque
+
+double total_loss() {
+    return 0;
+}
+
+double desired_speed() {
+    return u[next] + k2*(x[next] - x[i] - d);
+}
+
+double desired_acceleration() {
+    return a[next] + k1*(u[next] - u[i]);
+}
+
+double clamp(double in) {
+    const double MAX_T = %MAX_T%;
+    if(i < not_attacked_vehicle && in>=MAX_T) return MAX_T;
+
+    return in;
+}
+
+double torque() {
+    double tor =  ms*R*(desired_acceleration() - k * (u[i] - desired_speed())) + R*total_loss();
+    return tor;
+}
+
+double sigma() {
+    if(w<=0 || u[i] <= 0.3) return 0.0;
+    return (w*R-u[i])/(w*R);
+}
+
+double mu() { // Friction model
+    double abs_sigma = fabs(sigma());
+    if (abs_sigma <=0) return 0.0001;
+    return road_state[0]*(1-exp(-road_state[1]*abs_sigma))-road_state[2]*abs_sigma;
+}
+
+double longitudinal_force() {
+    return mu()*m*g*(h/l);
+}
+    
+double linear_acceleration() {
+    return (1/m)*(longitudinal_force() - total_loss());
+}
+
+double angular_acceleration() {
+    double tor = torque();
+    if(USE_CLAMP)
+        tor = clamp(tor);
+    return (1/J)*(tor - R*longitudinal_force());
+}
+
+double deceleration() {
+    double accel = fmax(0, a[i] * (u[i] / (1 + u[i])));
+    double min_threshold = 0.1;
+    
+    if (u[i] <= min_threshold) return 0;
+    
+    return fmax(0, accel);
+}
+
+bool check_position(){
+    if ( x[rank_inserted] > x[i] && x[rank_inserted] < x[next]) return true;
+    return false;
+}
+
+void update_front_position(){
+    waiting = false;
+    new_next = next;
+    next = rank_inserted;
+}
+
+bool is_distance_safe(){
+    //if (x[i] <=x[next] - 2*d) return true;
+    //return false;
+    return (x[i] <= x[next] - 6.66) ? true : false;
+}
+
+bool last_in_platoon(){
+    if(x[i] <= x[last]) return true;
+    return false;
+}   
+state
+    NOT_JOINED { s <= i*3 },
+    JOINED { x[i]' == u[i] &&
+w' == angular_acceleration() &&
+u[i]' == a[i] &&//linear_acceleration() &&
+a[i]' == (linear_acceleration()-a[i])/0.01 &&
+tor' == (torque() - tor) &&
+slip' == (sigma() - slip) ; 2 };
+init
+    NOT_JOINED;
+trans
+    NOT_JOINED -> JOINED { guard s>= i*3; assign joined = true; };
+}
+// Leader physical quantities and initial state
+double leader_acceleration = 0.1;
+
+// Followers physical quantities and initial state
+//clock positions[NUM_VEHICLES] = {300,200,100,00};//,100,0};
+//clock positions[NUM_VEHICLES] = {600,400,200,00};//,100,0};
+clock positions[NUM_VEHICLES] = {45,30,15,0};//,100,0};
+clock speeds[NUM_VEHICLES] = {0,0,0,0};//,0,0};
+clock accelerations[NUM_VEHICLES] = {0,0,0,0};//,0,0};
+
+// Channels for leave sync
+broadcast chan platoon_left[NUM_VEHICLES];
+broadcast chan platoon_join;
+
+// Generator function for the followers dynamic
+Follower(const int rank,const bool leaving, const bool join_in_middle, const bool attacked, const int altered_var) = FollowerDynamic(
+    rank,          // Vehicle position in platoon
+    rank-1,        // Index of next vehicle in platoon
+    positions,     // Positions array
+    speeds,        // Speeds array,
+    accelerations, // Accelerations array
+    desired_distance,
+    platoon_left,
+    platoon_join,
+    leaving,
+    join_in_middle,
+    attacked,
+    altered_var
+);
+
+
+Leader = LeaderDynamic(leader_acceleration,  positions[0], speeds[0], accelerations[0]);
+Follower1 = Follower(1, false, false, false,0);
+Follower2 = Follower(2, false, false, false,0);
+Follower3 = Follower(3, false, false, false,0);
+
+Command = PlatoonCommand(leader_acceleration,desired_distance);
+Sim = Simulation(positions);
+
+
+// Platoon composition
+system Sim, Leader, Command, Follower1, Follower2, Follower3;

@@ -1,0 +1,42 @@
+process LeaderDynamic graphinfo {
+location L0 (272,-94);
+invariant L0(-119,26);
+}
+process PlatoonCommand graphinfo {
+location L0 (433,-93);
+location CYCLE (102,-93);
+locationName CYCLE(8,-26);
+invariant CYCLE(-51,17);
+location L1 (102,-246);
+invariant L1(25,-17);
+location L2 (-102,-246);
+invariant L2(-85,-9);
+guard L1 L2 1 (-51,-68);
+assign L1 L2 1 (-51,-43);
+trans L2 CYCLE 1 (-102,76);
+guard L2 CYCLE 1 (-161,-43);
+assign L2 CYCLE 1 (-238,16);
+guard CYCLE L1 1 (25,16);
+assign CYCLE L1 1 (25,-26);
+assign L0 CYCLE 1 (5,34);
+}
+process Simulation graphinfo {
+location L0 (42,-153);
+invariant L0(0,17);
+trans L0 L0 1 (-51,0);
+trans L0 L0 1 (-51,-51);
+trans L0 L0 1 (0,-51);
+guard L0 L0 1 (9,-76);
+assign L0 L0 1 (-246,-59);
+}
+process FollowerDynamic graphinfo {
+location NOT_JOINED (-2312,-1904);
+locationName NOT_JOINED(-111,-17);
+invariant NOT_JOINED(-110,9);
+location JOINED (-2149,-2184);
+locationName JOINED(-78,8);
+invariant JOINED(7,8);
+exponentialrate JOINED(-10,34);
+guard NOT_JOINED JOINED 1 (-133,4);
+assign NOT_JOINED JOINED 1 (-150,21);
+}
