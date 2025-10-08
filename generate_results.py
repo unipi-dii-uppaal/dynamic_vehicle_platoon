@@ -24,8 +24,10 @@ def parse_filename(filename):
     return distance, road, clamp, max_t
 
 def process_file(filename, writer):
+    print(f"Processing {filename}", file=sys.stderr)
     distance, road, clamp, max_t = parse_filename(filename)
     if not all([distance, road, clamp]):
+        print(f"Error processing {filename}, distance={distance}, road={road}, clamp={clamp}", file=sys.stderr)
         return
     
     current_formula = None
@@ -50,12 +52,14 @@ def process_file(filename, writer):
                 # Detect query type if not set
                 if not current_type:
                     if 'Pr(' in line:
+                        #print(f" Detected propability: '{line}`", file=sys.stderr)
                         current_type = 'probability'
                         pr_match = re.search(
                             r'\((\d+)/(\d+) runs\).*?\[([0-9.]+),([0-9.]+)\].*?(\d+)% CI', 
                             line
                         )
                         if pr_match:
+                            #print("  OK!", file=sys.stderr)
                             current_data.update({
                                 'runs': pr_match.group(1),
                                 'tot_runs': pr_match.group(2),
@@ -65,9 +69,9 @@ def process_file(filename, writer):
                             })
                     elif 'E(' in line:
                         current_type = 'estimation'
-                        print(line, file=sys.stderr)
+                        #print(line, file=sys.stderr)
                         match = re.search(r'\((\d+) runs\) E\(\w+\) = ([\d\.]+) ± ([\d\.e\-\+]+) \((\d+)% CI\)', line)
-                        print(match, file=sys.stderr)
+                        #print(match, file=sys.stderr)
                         
                         current_data['runs'] = match.group(1)
                         current_data["mean"] = match.group(2)
@@ -82,24 +86,27 @@ def process_file(filename, writer):
                     mean_match = re.search(r'mean=([0-9.]+)', line)
                     if mean_match and 'mean' not in current_data:
                         current_data['mean'] = mean_match.group(1)
-                        # Write when we have all data
-                        if all(k in current_data for k in ['lb', 'ub']):
-                            writer.writerow([
-                                current_formula,
-                                current_query,
-                                distance,
-                                road,
-                                clamp,
-                                current_data['lb'],
-                                current_data['ub'],
-                                current_data['ci'],
-                                current_data['mean'],
-                                '',
-                                current_data['runs'],
-                                current_data['tot_runs']
-                            ])
-                            current_formula = None
-                            
+
+                    # Write when we have all data
+                    if (str.encode(line) == b'\x1b[2K' or "mean" in current_data) and all(k in current_data for k in ['lb', 'ub']):
+                        #print("  Printing to stdout", file=sys.stderr)
+                        writer.writerow([
+                            current_formula,
+                            current_query,
+                            distance,
+                            road,
+                            clamp,
+                            max_t,
+                            current_data['lb'],
+                            current_data['ub'],
+                            current_data['ci'],
+                            current_data['mean'] if 'mean' in current_data else '',
+                            '',
+                            current_data['runs'],
+                            current_data['tot_runs']
+                        ])
+                        current_formula = None
+                        
                 elif current_type == 'estimation':
                     # Extract values from values line
                     values_match = re.search(
