@@ -1,0 +1,4 @@
+.vscode
+model_*.xta
+results*
+*.csv
